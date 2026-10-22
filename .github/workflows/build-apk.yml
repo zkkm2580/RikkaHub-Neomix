@@ -1,0 +1,73 @@
+name: Build and Release APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web-ui/pnpm-lock.yaml
+
+      - name: Install web-ui dependencies
+        working-directory: web-ui
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare mock signing and config
+        run: |
+          mkdir -p app
+          # Create mock google-services.json if not present
+          if [ ! -f app/google-services.json ]; then
+            echo '{"project_info":{"project_number":"123456789","project_id":"rikkahub-mock"},"client":[{"client_info":{"mobilesdk_app_id":"1:123456789:android:abcdef","android_client_info":{"package_name":"app.androidrik.rikkahub"}},"api_key":[{"current_key":"mock_key"}]}]}' > app/google-services.json
+          fi
+
+          # Create debug keystore as release key
+          keytool -genkey -v -keystore app/app.key -alias androidrelease -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 -dname "CN=RikkaHub, OU=App, O=RikkaHub, C=US"
+          cat <<EOF > local.properties
+storeFile=app.key
+storePassword=123456
+keyAlias=androidrelease
+keyPassword=123456
+EOF
+
+      - name: Gradle Build
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --stacktrace
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        if: success()
+        with:
+          tag_name: v1.0.28-release
+          name: "RikkaHub Neomix 1.0.28-beta.6 APK Build"
+          prerelease: false
+          body: |
+            RikkaHub Neomix 自动编译 APK 安装包。
+            基于 [Fantasycvh/RikkaHub-Neomix](https://github.com/Fantasycvh/RikkaHub-Neomix) 的 master 分支构建。
+          files: |
+            app/build/outputs/apk/release/*.apk
